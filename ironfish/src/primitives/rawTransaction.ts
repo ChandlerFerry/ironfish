@@ -5,11 +5,15 @@
 import {
   AMOUNT_VALUE_LENGTH,
   ASSET_LENGTH,
+  PROOF_LENGTH,
   Transaction as NativeTransaction,
   TRANSACTION_EXPIRATION_LENGTH,
   TRANSACTION_FEE_LENGTH,
+  TRANSACTION_PUBLIC_KEY_RANDOMNESS_LENGTH,
+  TRANSACTION_SIGNATURE_LENGTH,
 } from '@ironfish/rust-nodejs'
 import { Asset, ASSET_ID_LENGTH } from '@ironfish/rust-nodejs'
+import { BufferMap } from 'buffer-map'
 import bufio from 'bufio'
 import { Witness } from '../merkletree'
 import { NoteHasher } from '../merkletree/hasher'
@@ -53,17 +57,54 @@ export class RawTransaction {
     >
   }[] = []
 
-  size(): number {
+  size(senderPublicAddress: string): number {
     let size = 0
+    size += 1 // version
     size += 8 // spends length
     size += 8 // notes length
-    size += 8 // fee
-    size += 4 // expiration
-    size += 64 // signature
-    size += this.outputs.length * NOTE_ENCRYPTED_SERIALIZED_SIZE_IN_BYTE
-    size += this.mints.length * (ASSET_LENGTH + 8)
-    size += this.burns.length * (ASSET_ID_LENGTH + 8)
+    size += 8 // mints length
+    size += 8 // burns length
+    size += TRANSACTION_FEE_LENGTH // fee
+    size += TRANSACTION_EXPIRATION_LENGTH // expiration
+    size += TRANSACTION_PUBLIC_KEY_RANDOMNESS_LENGTH // public key randomness
     size += this.spends.length * SPEND_SERIALIZED_SIZE_IN_BYTE
+    size += this.outputs.length * NOTE_ENCRYPTED_SERIALIZED_SIZE_IN_BYTE
+    size +=
+      this.mints.length *
+      (PROOF_LENGTH + ASSET_LENGTH + AMOUNT_VALUE_LENGTH + TRANSACTION_SIGNATURE_LENGTH)
+    size += this.burns.length * (ASSET_ID_LENGTH + 8)
+    size += TRANSACTION_SIGNATURE_LENGTH // signature
+
+    // Each asset might have a change note, which would need to be accounted for
+    const assetTotals = new BufferMap<bigint>()
+    for (const mint of this.mints) {
+      const asset = new Asset(senderPublicAddress, mint.name, mint.metadata)
+      const assetValue = assetTotals.get(asset.id())
+      assetTotals.set(asset.id(), assetValue ? assetValue + mint.value : mint.value)
+    }
+    for (const burn of this.burns) {
+      const assetValue = assetTotals.get(burn.assetId)
+      assetTotals.set(burn.assetId, assetValue ? assetValue - burn.value : -burn.value)
+    }
+    for (const spend of this.spends) {
+      const assetValue = assetTotals.get(spend.note.assetId())
+      assetTotals.set(
+        spend.note.assetId(),
+        assetValue ? assetValue - spend.note.value() : -spend.note.value(),
+      )
+    }
+    for (const output of this.outputs) {
+      const assetValue = assetTotals.get(output.note.assetId())
+      assetTotals.set(
+        output.note.assetId(),
+        assetValue ? assetValue + output.note.value() : output.note.value(),
+      )
+    }
+    for (const [, value] of assetTotals) {
+      if (value !== 0n) {
+        size += NOTE_ENCRYPTED_SERIALIZED_SIZE_IN_BYTE
+      }
+    }
     return size
   }
 

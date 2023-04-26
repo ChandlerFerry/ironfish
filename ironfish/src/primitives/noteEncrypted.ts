@@ -13,6 +13,7 @@ import bufio from 'bufio'
 import { Serde } from '../serde'
 import { Note } from './note'
 
+//192 + 328 = 520
 export const NOTE_ENCRYPTED_SERIALIZED_SIZE_IN_BYTE = PROOF_LENGTH + ENCRYPTED_NOTE_LENGTH
 
 export type NoteEncryptedHash = Buffer
